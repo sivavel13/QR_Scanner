@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+gunicorn
+python-dotenv
+google-genai
+pydantic
+pillow
+python-multipart
+aiosqlite

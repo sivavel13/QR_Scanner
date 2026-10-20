@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Product Scanner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+  <style>
+    @keyframes scanLaser {
+      0% { top: 5%; opacity: 0.2; }
+      50% { top: 95%; opacity: 1; }
+      100% { top: 5%; opacity: 0.2; }
+    }
+    .laser-line {
+      animation: scanLaser 2s infinite ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
+  <div class="max-w-6xl mx-auto space-y-6">
+
+    <!-- Header -->
+    <header class="flex justify-between items-center border-b border-slate-800 pb-4">
+      <div>
+        <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+          <span>📦</span> Warehouse QR & Barcode Scanner
+        </h1>
+        <p class="text-sm text-slate-400">On-demand scanning with automated SQLite saving</p>
+      </div>
+      <div id="statusBadge" class="px-3 py-1 bg-slate-800 text-slate-400 rounded-full text-xs font-semibold">
+        Scanner Offline
+      </div>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- Left Column: Camera Viewport -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col space-y-4">
+        <div class="relative bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center border border-slate-800">
+          <video id="video" class="w-full h-full object-cover" autoplay playsinline muted></video>
+
+          <!-- Off State Overlay -->
+          <div id="offlineOverlay" class="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
+            <svg class="w-16 h-16 text-slate-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+            </svg>
+            <p class="text-slate-400 font-medium">Camera is turned off</p>
+            <p class="text-xs text-slate-500 mt-1">Click the button below to begin a single scan</p>
+          </div>
+
+          <!-- Active Scanning Overlay (Reticle + Laser) -->
+          <div id="reticle" class="absolute inset-8 border-2 border-dashed border-cyan-400/60 rounded-lg pointer-events-none hidden flex-col justify-between p-2">
+            <span class="laser-line absolute left-0 right-0 h-0.5 bg-cyan-400 shadow-[0_0_12px_#22d3ee]"></span>
+            <span class="text-[10px] text-cyan-300 uppercase tracking-wider self-center bg-black/75 px-2 py-0.5 rounded">Present Code to Camera</span>
+          </div>
+
+          <!-- Spinner Overlay during Extraction -->
+          <div id="loadingOverlay" class="absolute inset-0 bg-black/85 hidden flex-col items-center justify-center gap-3">
+            <div class="w-10 h-10 border-4 border-cyan-400 border-t-transparent rounded-full animate-spin"></div>
+            <p class="text-sm font-medium text-cyan-300">Recognized! Extracting & Saving...</p>
+          </div>
+        </div>
+
+        <!-- Action Control Button -->
+        <button id="scanActionBtn" onclick="toggleScanSession()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-3 rounded-xl transition flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/30">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+          </svg>
+          <span id="scanBtnLabel">Start Scan</span>
+        </button>
+      </div>
+
+      <!-- Right Column: Extracted Product Details -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+            <h2 class="text-lg font-semibold text-white">Extracted Details</h2>
+            <span id="dbBadge" class="hidden text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded-full font-mono">
+              Saved to Database ✓
+            </span>
+          </div>
+
+          <!-- Empty State -->
+          <div id="noDataPlaceholder" class="py-16 text-center text-slate-500">
+            <svg class="w-12 h-12 mx-auto mb-2 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+            </svg>
+            <p>No product scanned yet</p>
+          </div>
+
+          <!-- Extracted Grid -->
+          <div id="detailsCard" class="space-y-3 hidden">
+            <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+              <span class="text-xs uppercase text-slate-500 font-semibold">Product Name</span>
+              <div id="d_product" class="text-base font-semibold text-cyan-300">--</div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <span class="text-xs uppercase text-slate-500 font-semibold">Barcode / GTIN</span>
+                <div id="d_barcode" class="font-mono text-white text-sm">--</div>
+              </div>
+              <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <span class="text-xs uppercase text-slate-500 font-semibold">Pack Size</span>
+                <div id="d_pack" class="text-white text-sm">--</div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3">
+              <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <span class="text-xs uppercase text-slate-500 font-semibold">Weight</span>
+                <div id="d_weight" class="text-white text-sm">--</div>
+              </div>
+              <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <span class="text-xs uppercase text-slate-500 font-semibold">BBE Date</span>
+                <div id="d_bbe" class="text-emerald-400 font-medium text-sm">--</div>
+              </div>
+              <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <span class="text-xs uppercase text-slate-500 font-semibold">Price Mark</span>
+                <div id="d_price" class="text-yellow-400 font-medium text-sm">--</div>
+              </div>
+            </div>
+
+            <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+              <span class="text-xs uppercase text-slate-500 font-semibold">Batch & Line Codes</span>
+              <div id="d_codes" class="font-mono text-xs text-slate-300">--</div>
+            </div>
+
+            <div class="bg-slate-950 p-3 rounded-lg border border-slate-800">
+              <span class="text-xs uppercase text-slate-500 font-semibold">Manufacturer</span>
+              <div id="d_mfg" class="text-xs text-slate-300">--</div>
+            </div>
+          </div>
+        </div>
+
+        <p class="text-xs text-slate-600 mt-4 text-center">Data automatically recorded in SQLite database (<code>products.db</code>)</p>
+      </div>
+
+    </div>
+  </div>
+
+  <canvas id="hiddenCanvas" class="hidden"></canvas>
+
+  <script>
+    const video = document.getElementById('video');
+    const statusBadge = document.getElementById('statusBadge');
+    const offlineOverlay = document.getElementById('offlineOverlay');
+    const reticle = document.getElementById('reticle');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const scanActionBtn = document.getElementById('scanActionBtn');
+    const scanBtnLabel = document.getElementById('scanBtnLabel');
+    const canvas = document.getElementById('hiddenCanvas');
+
+    const codeReader = new ZXing.BrowserMultiFormatReader();
+    let localStream = null;
+    let isCameraActive = false;
+    let hasCaptured = false;
+
+    // Beep Confirmation
+    function playBeep() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.setValueAtTime(1750, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.12);
+      } catch (e) {}
+    }
+
+    // Requirement 1 & 4: Controlled toggle
+    async function toggleScanSession() {
+      if (isCameraActive) {
+        stopCamera();
+      } else {
+        await startCamera();
+      }
+    }
+
+    // Start scanning only when clicked
+    async function startCamera() {
+      try {
+        hasCaptured = false;
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        video.srcObject = localStream;
+
+        // UI states
+        offlineOverlay.classList.add('hidden');
+        reticle.classList.remove('hidden');
+        reticle.classList.add('flex');
+        statusBadge.innerText = "Scanning Active";
+        statusBadge.className = "px-3 py-1 bg-cyan-950 text-cyan-400 border border-cyan-800 rounded-full text-xs font-semibold";
+        scanBtnLabel.innerText = "Cancel Scan";
+        scanActionBtn.classList.replace("bg-cyan-600", "bg-rose-700");
+        scanActionBtn.classList.replace("hover:bg-cyan-500", "hover:bg-rose-600");
+        isCameraActive = true;
+
+        // Requirement 2: Automatically recognize barcode/QR
+        codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
+          if (result && !hasCaptured) {
+            hasCaptured = true;
+            playBeep();
+            triggerAutoCapture();
+          }
+        });
+
+      } catch (err) {
+        alert("Unable to open camera: " + err);
+        stopCamera();
+      }
+    }
+
+    // Requirement 4: Turn off camera after extraction
+    function stopCamera() {
+      try {
+        codeReader.reset();
+      } catch(e) {}
+
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
+      }
+      video.srcObject = null;
+
+      // UI reset
+      offlineOverlay.classList.remove('hidden');
+      reticle.classList.add('hidden');
+      reticle.classList.remove('flex');
+      statusBadge.innerText = "Scanner Idle";
+      statusBadge.className = "px-3 py-1 bg-slate-800 text-slate-400 rounded-full text-xs font-semibold";
+      scanBtnLabel.innerText = "Scan Next Product";
+      scanActionBtn.classList.replace("bg-rose-700", "bg-cyan-600");
+      scanActionBtn.classList.replace("hover:bg-rose-600", "hover:bg-cyan-500");
+      isCameraActive = false;
+    }
+
+    // Capture, Process with Gemini, and Save
+    async function triggerAutoCapture() {
+      loadingOverlay.classList.remove('hidden');
+      loadingOverlay.classList.add('flex');
+      statusBadge.innerText = "Processing Details...";
+
+      // Draw current video frame to hidden canvas
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      canvas.toBlob(async (blob) => {
+        const formData = new FormData();
+        formData.append("image", blob, "scan.jpeg");
+
+        try {
+          const response = await fetch("/scan", {
+            method: "POST",
+            body: formData
+          });
+
+          if (!response.ok) throw new Error(await response.text());
+
+          const data = await response.json();
+          renderDetails(data);
+          statusBadge.innerText = "Saved to DB ✓";
+        } catch (err) {
+          alert("Extraction error: " + err.message);
+          statusBadge.innerText = "Error in extraction";
+        } finally {
+          loadingOverlay.classList.add('hidden');
+          loadingOverlay.classList.remove('flex');
+          // Automatically close camera — ready for next explicit scan
+          stopCamera();
+        }
+      }, "image/jpeg", 0.95);
+    }
+
+    // Requirement 3: Display product data
+    function renderDetails(data) {
+      document.getElementById('noDataPlaceholder').classList.add('hidden');
+      document.getElementById('detailsCard').classList.remove('hidden');
+      document.getElementById('dbBadge').classList.remove('hidden');
+
+      document.getElementById('d_product').innerText = data.product_name || "N/A";
+      document.getElementById('d_barcode').innerText = data.barcode_number || "N/A";
+      document.getElementById('d_pack').innerText = data.pack_size || "N/A";
+      document.getElementById('d_weight').innerText = data.case_weight || "N/A";
+      document.getElementById('d_bbe').innerText = data.best_before_end || "N/A";
+      document.getElementById('d_price').innerText = data.price_mark || "N/A";
+      document.getElementById('d_codes').innerText = `${data.batch_or_ref_number || ''} | ${data.line_time_codes || ''}`;
+      document.getElementById('d_mfg').innerText = data.manufacturer || "N/A";
+    }
+  </script>
+</body>
+</html>
